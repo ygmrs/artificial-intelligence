@@ -1,0 +1,147 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "design_rag_pipeline",
+      "description": "Design a production-aware RAG pipeline architecture with ingestion, indexing, retrieval, generation, verification, observability, and safety controls.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "problem_statement"
+        ],
+        "properties": {
+          "problem_statement": {
+            "type": "string",
+            "description": "The RAG system problem or use case to design for."
+          },
+          "corpus_description": {
+            "type": "string",
+            "description": "A short description of the document corpus, data sources, formats, volume, or domain."
+          },
+          "requirements": {
+            "type": "array",
+            "description": "Functional or non-functional requirements such as latency, citation quality, access control, freshness, or reliability.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "constraints": {
+            "type": "array",
+            "description": "Known implementation constraints such as budget, infrastructure, data privacy, indexing limits, or deployment restrictions.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "verify_grounded_answer",
+      "description": "Check whether an AI-generated answer has supporting evidence available and identify whether stronger claim-level verification is needed.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "answer",
+          "evidence"
+        ],
+        "properties": {
+          "answer": {
+            "type": "string",
+            "description": "The AI-generated answer that needs grounding verification."
+          },
+          "evidence": {
+            "type": "array",
+            "description": "Retrieved evidence passages, source snippets, or citation records used to support the answer.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "claims": {
+            "type": "array",
+            "description": "Optional extracted claims from the answer that should be checked against the evidence.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "evaluate_ai_architecture",
+      "description": "Review an AI system architecture for retrieval quality, grounding, tool safety, authorization boundaries, observability, evaluation coverage, cost, latency, and deployment readiness.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "architecture_description"
+        ],
+        "properties": {
+          "architecture_description": {
+            "type": "string",
+            "description": "The AI system architecture, workflow, or design that should be reviewed."
+          },
+          "review_focus": {
+            "type": "array",
+            "description": "Specific areas to emphasize during the review, such as RAG, agents, security, observability, reliability, cost, or evaluation.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "risk_level": {
+            "type": "string",
+            "description": "The expected risk level of the AI system.",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_agent_observability_plan",
+      "description": "Create an observability plan for an AI agent or assistant, including logs, metrics, traces, alerts, and failure signals.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "system_description"
+        ],
+        "properties": {
+          "system_description": {
+            "type": "string",
+            "description": "A description of the AI assistant, agent, RAG pipeline, or tool-calling workflow."
+          },
+          "runtime_components": {
+            "type": "array",
+            "description": "Runtime components involved in the system, such as retriever, reranker, model, tools, verifier, database, queue, or API service.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "risk_level": {
+            "type": "string",
+            "description": "The expected operational risk level of the system.",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+]

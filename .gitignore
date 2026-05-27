@@ -1,0 +1,75 @@
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# OpenAI / assistant runtime files
+openai-assistants.json
+src/openai-assistants.json
+assistant_id*.txt
+*.token
+*.key
+*.pem
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Test and coverage artifacts
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+
+# Type checking / linting caches
+.mypy_cache/
+.pyright/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+*.log
+logs/
+
+# Local runtime/output folders
+.runtime/
+.artifacts/
+outputs/
+tmp/
+temp/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE/editor files
+.vscode/
+.idea/
+
+# Node artifacts if added later
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Data/cache files
+.cache/
+*.sqlite
+*.db
