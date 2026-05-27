@@ -1,4 +1,4 @@
-# Artificial Intelligence Engineering
+# Artificial Intelligence
 
 A collection of Python-based AI engineering focused on assistant orchestration, function calling, tool execution patterns, document analysis, and practical AI system design.
 
