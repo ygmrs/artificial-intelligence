@@ -22,23 +22,14 @@ The active implementation demonstrates multi-turn interaction, structured functi
 
 ```mermaid
 flowchart LR
-    A["User"] --> B["Responses API"]
-    B --> C{"Tool call?"}
+    A["User Input"] --> B["Responses API"]
+    B --> C{"Tool Call?"}
 
-    C -- No --> D["Return response"]
+    C -- "No" --> D["Final Response"]
+    C -- "Yes" --> E["Validate & Execute Tool"]
 
-    C -- Yes --> E["Validate arguments"]
-    E --> F["Local tool runtime"]
-    F --> G{"Supported?"}
-
-    G -- Yes --> H["Execute tool"]
-    G -- No --> I["adapter_required"]
-
-    H --> J["Structured result"]
-    I --> J
-
-    J --> K["function_call_output"]
-    K --> B
+    E --> F["Function Call Output"]
+    F -->|"Continue"| B
 ```
 
 ### Request Flow
