@@ -10,7 +10,7 @@ client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # ======== Knowledge base ==========
 file = client.files.create(
     file=open("./a_beginners_guide_to_the_stock_market.pdf", "rb"),
-    purpose='assistants'
+    purpose='assistant'
 )
 
 

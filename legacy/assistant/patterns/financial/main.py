@@ -36,10 +36,10 @@ tools_list = [{"type": "retrieval"},
 # Initialize the client
 client = openai.OpenAI()
 
-# Upload a file with an "assistants" purpose
+# Upload a file with an "assistant" purpose
 file = client.files.create(
     file=open("exchange.pdf", "rb"),
-    purpose='assistants'
+    purpose='assistant'
 )
 
 # Create an Assistant

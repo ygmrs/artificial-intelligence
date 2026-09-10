@@ -1,99 +1,154 @@
 # Artificial Intelligence
 
-A collection of Python-based AI engineering focused on assistant orchestration, function calling, tool execution patterns, document analysis, and practical AI system design.
+A production-minded reference implementation for modern AI application engineering, covering multi-turn orchestration, structured tool use, safe execution boundaries, grounding, and evaluation-aware system design.
 
-This repository is organized as a portfolio-friendly AI engineering workspace. It includes a modernized assistant implementation under `src/` and supporting examples under `patterns/`.
+The active implementation demonstrates multi-turn interaction, structured function calling, bounded tool orchestration, and safe local tool execution. Earlier Assistants and Chat Completions examples are preserved under `legacy/` for reference.
 
-## Project Goals
+## What This Project Demonstrates
 
-This project demonstrates practical AI engineering patterns, including:
+- OpenAI Responses API
+- Multi-turn conversation state
+- Structured function calling
+- Safe local tool execution
+- Tool argument validation and error handling
+- Bounded tool-call execution
+- Explicit fallback for unsupported external integrations
+- RAG architecture design patterns
+- Grounding and answer-verification patterns
+- AI architecture evaluation
+- Agent observability planning
 
-- OpenAI assistant lifecycle management
-- Assistant creation, update, retrieval, and deletion
-- Thread-based conversation handling
-- Streaming assistant responses
-- Function and tool-calling workflows
-- Safe local tool execution fallback
-- Chat completion patterns
-- Document analysis workflows
-- AI systems engineering assistant design
-- Separation between core assistant logic and reusable implementation patterns
+## Architecture
+
+```mermaid
+flowchart TD
+    A["User Input"] --> B["OpenAI Responses API"]
+
+    B --> C{"Function Call Requested?"}
+
+    C -- "No" --> D["Model Response"]
+    D --> E["Return Answer to User"]
+
+    C -- "Yes" --> F["Parse & Validate Arguments"]
+    F --> G["Safe Local Tool Runtime"]
+
+    G --> H{"Tool Available Locally?"}
+
+    H -- "Yes" --> I["Execute AI Engineering Tool"]
+    H -- "No" --> J["Return adapter_required"]
+
+    I --> K["Structured Tool Result"]
+    J --> K
+
+    K --> L["function_call_output"]
+    L --> M["Continue Response using previous_response_id"]
+    M --> B
+```
+
+### Request Flow
+
+```text
+User Input
+    │
+    ▼
+Responses API
+    │
+    ├── Direct response ───► User
+    │
+    └── Function call
+            │
+            ▼
+      Argument validation
+            │
+            ▼
+      Safe local tool runtime
+            │
+      ┌─────┴──────────────────┐
+      │                        │
+      ▼                        ▼
+Local implementation      Unknown integration
+      │                        │
+      ▼                        ▼
+Structured result        adapter_required
+      │                        │
+      └────────────┬───────────┘
+                   ▼
+         function_call_output
+                   │
+                   ▼
+           Responses API
+                   │
+                   ▼
+              Final answer
+```
+
+The local tool runtime intentionally performs no external provider actions and handles no credentials. Unsupported tools return an explicit `adapter_required` result instead of simulating successful execution.
 
 ## Repository Structure
 
 ```text
 artificial-intelligence/
+├── .github/
+│   └── workflows/
+│       └── ci.yml
+│
 ├── src/
 │   ├── ai_assistant.py
-│   ├── tool_functions.json
-│   └── openai-assistants.json
-├── patterns/
+│   └── tool_functions.json
+│
+├── tests/
+│   ├── test_assistant.py
+│   └── test_tools.py
+│
+├── legacy/
 │   ├── assistant/
-│   ├── chat_completion/
-│   ├── airtable_fc.py
-│   ├── code_interpreter_wout_stream.py
-│   ├── function_calling_with_stream.py
-│   └── function_calling_wout_stream.py
-├── requirements.txt
+│   │   ├── patterns/
+│   │   ├── .env.example
+│   │   ├── ai_assistant.py
+│   │   ├── README.md
+│   │   └── requirements.txt
+│   │
+│   └── chat_completion/
+│       └── search/
+│
 ├── .env.example
 ├── .gitignore
 ├── LICENSE
+├── requirements.txt
 └── README.md
 ```
 
-The repository is organized into two main areas:
+### Active vs. Legacy
 
-- `src/` contains the primary assistant implementation.
-- `patterns/` contains reusable AI engineering patterns, including assistant orchestration, function calling, document analysis, tool execution, and chat completion workflows.
+| Area | Purpose |
+|---|---|
+| `src/` | Actively maintained Responses API implementation |
+| `tests/` | Unit tests for orchestration, tool execution, validation, and state |
+| `legacy/assistant/` | Previous Assistants implementation preserved for historical and migration reference |
+| `legacy/chat_completion/` | Earlier Chat Completions examples preserved from the repository |
 
-## Main Implementation
+Chat Completions remains supported; it is considered legacy here only relative to this repository's active implementation.
 
-The primary assistant implementation is located in:
+## AI Engineering Tools
 
-```text
-src/ai_assistant.py
-```
+The local runtime includes structured examples for:
 
-This file demonstrates a structured assistant lifecycle, including assistant creation, update, retrieval, thread creation, streaming responses, and tool-call handling.
+- `design_rag_pipeline`
+- `verify_grounded_answer`
+- `evaluate_ai_architecture`
+- `create_agent_observability_plan`
 
-The assistant is designed as an **AI Systems Engineering Assistant** focused on:
-
-- RAG pipeline design
-- Agentic workflow design
-- Tool and function orchestration
-- Grounded generation
-- Answer verification
-- AI safety guardrails
-- Evaluation frameworks
-- Observability and tracing
-- Reliability, scalability, and maintainability
-
-## Patterns Directory
-
-The `patterns/` directory contains reusable AI engineering patterns and implementation references.
-
-It includes:
-
-- Assistant orchestration patterns
-- Chat completion workflows
-- Function-calling examples
-- Streaming and non-streaming execution patterns
-- Code interpreter usage patterns
-- Document analysis examples
-- Tool execution examples
-- Domain-specific workflow samples such as financial, flight, stock, weather, and home automation-style handlers
-
-The goal of this directory is to preserve reusable implementation approaches while keeping the main assistant implementation clean and easy to review.
+Unknown tools are not executed implicitly. They return an `adapter_required` result describing the controls expected from a real external integration.
 
 ## Requirements
 
 - Python 3.12+
 - OpenAI Python SDK
-- A valid OpenAI API key
+- OpenAI API key
 
-## Environment Setup
+## Setup
 
-Create a virtual environment:
+Create and activate a virtual environment:
 
 ```bash
 python3.12 -m venv .venv
@@ -106,36 +161,54 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-Create a local environment file:
+Set your API key:
 
 ```bash
-cp .env.example .env
+export OPENAI_API_KEY="your-openai-api-key"
 ```
 
-Add your OpenAI API key to `.env`:
-
-```env
-OPENAI_API_KEY=your-openai-api-key-here
-OPENAI_ASSISTANT_MODEL=gpt-4o
-```
-
-## Running the Assistant
-
-From the project root:
+Optionally override the model:
 
 ```bash
-cd src
-python ai_assistant.py
+export OPENAI_MODEL="your-model"
+```
+
+## Run
+
+From the repository root:
+
+```bash
+python src/ai_assistant.py
 ```
 
 Example prompts:
 
 ```text
 Design a grounded RAG architecture for a large document corpus.
-Review this AI agent architecture for reliability and observability.
-Create an evaluation plan for a RAG assistant that must avoid unsupported answers.
+
+Review an AI agent architecture for reliability and observability.
+
+Create an observability plan for a production AI agent.
 ```
+
+## Tests
+
+Run:
+
+```bash
+pytest -q
+```
+
+The tests use an injected fake OpenAI client, so they do not require live API calls or an API key.
+
+GitHub Actions runs the test suite automatically on pushes and pull requests to `main`.
+
+## Design Scope
+
+This repository is intentionally compact. It focuses on the Responses API and application-level tool orchestration rather than implementing a complete production platform.
+
+Real external integrations should use dedicated adapters with authentication, authorization, input validation, timeouts, observability, and explicit failure handling.
 
 ## License
 
-This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
+Licensed under the [MIT License](LICENSE).

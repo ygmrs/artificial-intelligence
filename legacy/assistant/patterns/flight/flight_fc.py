@@ -15,13 +15,13 @@ client = OpenAI(api_key=api_key)
 # step1.A: upload file
 file1 = client.files.create(
     file=open("coupons.tsv", "rb"),
-    purpose="assistants",
+    purpose="assistant",
 )
 
 # upload this one for the assistant to call the functions
 file2 = client.files.create(
     file=open("functions.py", "rb"),
-    purpose="assistants",
+    purpose="assistant",
 )
 
 print(file2.id)

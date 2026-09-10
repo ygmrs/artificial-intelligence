@@ -1,652 +1,681 @@
-from typing import Any, Dict, List, Optional
-import uuid
-import time
 import json
 import os
-import signal
-import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
-    from openai import OpenAI, AssistantEventHandler
-except ImportError:  # Keeps the module importable for local linting/tests before dependencies are installed.
-    OpenAI = None
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None  # type: ignore[assignment]
 
-    class AssistantEventHandler:  # type: ignore[no-redef]
-        pass
 
-# Files used by the local development runtime to store assistant and thread IDs.
-ID_FILE = os.getenv("ASSISTANT_ID_FILE", "openai-assistants.json")
-TOOL_FUNCTIONS_FILE = os.getenv("TOOL_FUNCTIONS_FILE", "tool_functions.json")
+BASE_DIR = Path(__file__).resolve().parent
 
-ASSISTANT_NAME = "AI Systems Engineering Assistant"
-USER = None
-TOOLS: List[Dict[str, Any]] = []
-client = None
+MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
+TOOL_FUNCTIONS_FILE = Path(
+    os.getenv("TOOL_FUNCTIONS_FILE", str(BASE_DIR / "tool_functions.json"))
+)
+MAX_TOOL_ROUNDS = int(os.getenv("MAX_TOOL_ROUNDS", "5"))
 
-# Global dictionary to hold assistant parameters
-ASSISTANT_PARAMS = {
-    "name": ASSISTANT_NAME,
-    "instructions": """
-You are an AI Systems Engineering Assistant designed for production-grade AI engineering work.
 
-Your role is to help engineers design, evaluate, and improve modern AI systems with a focus on:
+SYSTEM_INSTRUCTIONS = """
+You are an AI Systems Engineering Assistant.
+
+Your role is to help engineers design, evaluate, and improve modern AI systems
+with a focus on:
+
 - RAG pipelines
 - Agentic workflows
-- Tool/function orchestration
+- Tool and function orchestration
 - Grounded generation
 - Answer verification
 - AI safety guardrails
-- Evaluation frameworks
+- Evaluation
 - Observability and tracing
-- Latency, cost, reliability, and scalability
+- Reliability, latency, cost, and scalability
 - Secure AI integration patterns
 
-You should behave like a senior AI engineering advisor, not a generic chatbot.
+Operate like a senior AI engineering advisor rather than a generic chatbot.
 
-Core operating principles:
+Engineering principles:
 
-1. Production engineering mindset
-   - Give practical, implementation-oriented answers.
-   - Prefer clear architecture, trade-offs, failure modes, and operational concerns.
-   - Consider reliability, monitoring, testing, deployment, and maintainability.
+1. Production-minded engineering
+   - Give practical and implementation-oriented answers.
+   - Explain architecture, trade-offs, failure modes, testing, monitoring,
+     deployment, and maintainability when relevant.
 
-2. Grounded and verifiable responses
-   - Do not fabricate facts, tool results, logs, metrics, or external system behavior.
-   - If information is missing, state the assumption clearly.
-   - If the retrieved or provided context is insufficient, say so directly.
-   - Prefer evidence-based reasoning over confident guessing.
+2. Grounded responses
+   - Never fabricate facts, tool results, logs, metrics, or external behavior.
+   - Clearly state assumptions.
+   - If evidence or context is insufficient, say so directly.
 
-3. Tool/function calling discipline
-   - Use available tools only when they are relevant to the user’s request.
-   - Treat tool outputs as system evidence.
-   - Never claim a tool was executed unless a tool output confirms it.
-   - If a tool cannot be executed by the local runtime, explain what adapter or implementation is required.
-   - Never expose secrets, tokens, credentials, or private implementation details.
+3. Tool execution discipline
+   - Use tools only when relevant.
+   - Treat tool outputs as evidence.
+   - Never claim that a tool executed unless its returned result confirms it.
+   - If a real external integration is unavailable, explain that an adapter is
+     required rather than pretending execution occurred.
+   - Never expose secrets, tokens, credentials, or private implementation data.
 
-4. Modern AI engineering focus
-   When discussing RAG systems, include:
-   - ingestion
-   - normalization
-   - chunking
-   - metadata strategy
+4. AI system design
+   For RAG systems, consider:
+   - ingestion and normalization
+   - chunking and metadata
    - embeddings
-   - hybrid search
+   - hybrid retrieval
    - reranking
    - context assembly
-   - citation strategy
-   - generation constraints
+   - citations
    - claim verification
    - refusal logic
    - evaluation
    - observability
 
-   When discussing agentic systems, include:
+   For agentic systems, consider:
    - tool contracts
    - execution boundaries
    - state management
    - authorization
-   - audit trails
+   - auditability
    - safety controls
    - deterministic fallbacks
-   - human-in-the-loop escalation where needed
+   - human approval where appropriate
 
-5. Security and governance
+5. Security
    - Avoid unsafe tool execution.
-   - Do not request or store user credentials.
-   - Recommend environment variables, secret managers, least-privilege access, audit logs, and scoped permissions.
-   - Call out prompt injection, data leakage, tool misuse, and unsupported generation risks.
+   - Recommend least privilege, scoped permissions, validation, audit logging,
+     and secure secret management.
+   - Consider prompt injection, data leakage, tool misuse, and unsupported
+     generation.
 
-6. Answer style
-   - Be concise but technically strong.
-   - Structure answers clearly.
-   - Use engineering language appropriate for a U.S. software engineering portfolio.
+6. Response style
+   - Be concise and technically strong.
+   - Use clear engineering language.
    - Avoid hype and unsupported claims.
-   - When giving code, make it runnable, organized, and production-aware.
-
-Your goal is to help users design credible, high-quality AI engineering systems that are suitable for real-world implementation and strong enough to showcase in a professional GitHub portfolio.
-""",
-    "model": os.getenv("OPENAI_ASSISTANT_MODEL", "gpt-4o"),
-}
+   - When providing code, make it runnable and maintainable.
+""".strip()
 
 
-def get_client():
-    """Create the OpenAI client lazily so the file remains importable in tests."""
-    global client
+def get_client() -> Any:
+    """
+    Create an OpenAI client.
 
-    if client is not None:
-        return client
-
+    Keeping client creation separate makes the assistant easy to test by
+    injecting a fake client.
+    """
     if OpenAI is None:
         raise RuntimeError(
-            "The OpenAI Python SDK is not installed. Install it with: pip install openai"
+            "The OpenAI Python SDK is not installed. "
+            "Install dependencies before running this script."
         )
 
     if not os.getenv("OPENAI_API_KEY"):
         raise RuntimeError(
-            "OPENAI_API_KEY is not set. Export it before running this script."
+            "OPENAI_API_KEY is not set. "
+            "Set it in your environment before running the assistant."
         )
 
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    return client
+    return OpenAI()
 
 
-class EventHandler(AssistantEventHandler):
-    def on_event(self, event):
-        if event.event == "thread.run.requires_action":
-            run_id = event.data.id
-            thread_id = getattr(event.data, "thread_id", None)
-            self.handle_requires_action(event.data, run_id, thread_id)
-        elif event.event.startswith("thread.message"):
-            self.handle_message(event)
+def _normalize_function_tool(tool: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalize legacy Assistants-style function definitions to the Responses
+    API function-tool shape.
 
-    def handle_requires_action(self, data, run_id, thread_id=None):
-        """
-        Handles tool/function calls requested by the Assistant.
+    Legacy:
+        {
+            "type": "function",
+            "function": {
+                "name": "...",
+                "description": "...",
+                "parameters": {...}
+            }
+        }
 
-        Portfolio-oriented behavior:
-        - Parses each tool call safely.
-        - Removes legacy provider/auth/gateway handling.
-        - Supports local structured AI-engineering tool outputs.
-        - Returns an explicit adapter_required response for unknown external tools.
-        - Submits all tool outputs together, following the Assistants API pattern.
-        """
-        tool_outputs = []
+    Responses:
+        {
+            "type": "function",
+            "name": "...",
+            "description": "...",
+            "parameters": {...},
+            "strict": ...
+        }
 
-        required_action = getattr(data, "required_action", None)
-        submit_tool_outputs = getattr(required_action, "submit_tool_outputs", None)
-        tool_calls = getattr(submit_tool_outputs, "tool_calls", None) or []
+    This compatibility layer can be removed after tool_functions.json has been
+    migrated completely to the Responses API format.
+    """
+    if tool.get("type") != "function":
+        return tool
 
-        if not tool_calls:
-            print("No tool calls found in required_action.")
-            return
+    function_definition = tool.get("function")
 
-        for tool in tool_calls:
-            function = getattr(tool, "function", None)
-            function_name = getattr(function, "name", "unknown_function")
-            raw_arguments = getattr(function, "arguments", "{}") or "{}"
+    if not isinstance(function_definition, dict):
+        return tool
 
-            try:
-                function_args = json.loads(raw_arguments)
-            except json.JSONDecodeError as exc:
-                tool_outputs.append({
-                    "tool_call_id": tool.id,
-                    "output": json.dumps({
-                        "status": "error",
-                        "tool": function_name,
-                        "error_type": "invalid_json_arguments",
-                        "message": "The tool arguments could not be parsed as valid JSON.",
-                        "details": str(exc),
-                    }),
-                })
-                continue
+    normalized: Dict[str, Any] = {
+        "type": "function",
+        "name": function_definition["name"],
+        "description": function_definition.get("description", ""),
+        "parameters": function_definition.get(
+            "parameters",
+            {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        ),
+    }
 
-            if not isinstance(function_args, dict):
-                tool_outputs.append({
-                    "tool_call_id": tool.id,
-                    "output": json.dumps({
-                        "status": "error",
-                        "tool": function_name,
-                        "error_type": "invalid_argument_shape",
-                        "message": "Tool arguments must be a JSON object.",
-                    }),
-                })
-                continue
+    if "strict" in function_definition:
+        normalized["strict"] = function_definition["strict"]
+    elif "strict" in tool:
+        normalized["strict"] = tool["strict"]
 
-            custom_params = function_args.pop("_custom_params", {})
+    return normalized
 
-            output_payload = self.execute_ai_engineering_tool(
-                function_name=function_name,
-                function_args=function_args,
-                custom_params=custom_params,
-            )
 
-            tool_outputs.append({
-                "tool_call_id": tool.id,
-                "output": json.dumps(output_payload, ensure_ascii=False),
-            })
+def load_function_tools(file_path: Path = TOOL_FUNCTIONS_FILE) -> List[Dict[str, Any]]:
+    """
+    Load function-tool definitions.
 
-        if tool_outputs:
-            self.submit_tool_outputs(tool_outputs, run_id, thread_id)
+    Both the current Responses API format and the repository's previous
+    Assistants-style nested format are accepted during migration.
+    """
+    if not file_path.exists():
+        print(
+            f"Warning: {file_path} was not found. "
+            "The assistant will run without custom tools."
+        )
+        return []
 
-    @staticmethod
-    def execute_ai_engineering_tool(
-        function_name: str,
-        function_args: Dict[str, Any],
-        custom_params: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        """
-        Local structured tool runtime for portfolio use.
+    try:
+        with file_path.open("r", encoding="utf-8") as file:
+            tools = json.load(file)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"{file_path} contains invalid JSON: {exc}"
+        ) from exc
 
-        This replaces the old dispatcher/gateway/token flow.
-        It is intentionally safe:
-        - No external API calls.
-        - No credential handling.
-        - No OAuth/token storage.
-        - No hidden provider execution.
+    if not isinstance(tools, list):
+        raise RuntimeError(
+            f"{file_path} must contain a JSON array of tool definitions."
+        )
 
-        If tool_functions.json defines local AI-engineering tools, this method
-        returns useful structured outputs. If a tool is unknown, it returns a clear
-        adapter_required response instead of pretending execution happened.
-        """
-        custom_params = custom_params or {}
-        normalized_name = function_name.strip().lower()
+    return [_normalize_function_tool(tool) for tool in tools]
 
-        if normalized_name in {
-            "design_rag_pipeline",
-            "create_rag_architecture",
-            "generate_rag_design",
-            "rag_pipeline_design",
-        }:
+
+def execute_ai_engineering_tool(
+    function_name: str,
+    function_args: Dict[str, Any],
+    custom_params: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Safe local tool runtime.
+
+    The runtime intentionally performs no external provider calls and handles
+    no credentials. Unknown tools return adapter_required rather than
+    pretending that an external action was completed.
+    """
+    custom_params = custom_params or {}
+    normalized_name = function_name.strip().lower()
+
+    if normalized_name in {
+        "design_rag_pipeline",
+        "create_rag_architecture",
+        "generate_rag_design",
+        "rag_pipeline_design",
+    }:
+        return {
+            "status": "completed",
+            "tool": function_name,
+            "execution_mode": "local_ai_engineering_runtime",
+            "input": function_args,
+            "result": {
+                "architecture": {
+                    "ingestion": [
+                        "Normalize documents",
+                        "Extract text and metadata",
+                        "Deduplicate content",
+                        "Version source documents",
+                        "Preserve source lineage",
+                    ],
+                    "indexing": [
+                        "Create semantic chunks",
+                        "Store raw documents in object storage",
+                        "Store metadata in a relational or document database",
+                        "Use hybrid retrieval with keyword and vector indexes",
+                        "Apply permission and metadata filters before retrieval",
+                    ],
+                    "retrieval": [
+                        "Run hybrid search",
+                        "Apply reranking",
+                        "Assemble context with source IDs",
+                        "Detect weak, missing, stale, or conflicting evidence",
+                    ],
+                    "generation": [
+                        "Generate only from retrieved evidence",
+                        "Require citations for factual claims",
+                        "Refuse when evidence is insufficient",
+                        "Avoid unsupported synthesis",
+                    ],
+                    "verification": [
+                        "Extract answer claims",
+                        "Check claims against retrieved evidence",
+                        "Reject unsupported claims",
+                        "Return confidence and refusal reasons",
+                    ],
+                    "observability": [
+                        (
+                            "Log query, retrieved chunks, reranker scores, "
+                            "answer, citations, and verifier results"
+                        ),
+                        (
+                            "Track retrieval recall, faithfulness, citation "
+                            "accuracy, refusal quality, latency, and cost"
+                        ),
+                    ],
+                },
+                "recommended_controls": [
+                    "Evidence sufficiency gate",
+                    "Citation validator",
+                    "Claim-level verifier",
+                    "Prompt-injection filtering",
+                    "PII and sensitive-data handling",
+                    "Human review for high-risk workflows",
+                ],
+            },
+        }
+
+    if normalized_name in {
+        "verify_grounded_answer",
+        "check_answer_grounding",
+        "validate_claim_support",
+        "claim_verification",
+    }:
+        answer = function_args.get("answer", "")
+        evidence = function_args.get("evidence", [])
+        claims = function_args.get("claims", [])
+
+        if not answer:
             return {
                 "status": "completed",
                 "tool": function_name,
                 "execution_mode": "local_ai_engineering_runtime",
-                "input": function_args,
                 "result": {
-                    "architecture": {
-                        "ingestion": [
-                            "Normalize documents",
-                            "Extract text and metadata",
-                            "Deduplicate content",
-                            "Version source documents",
-                            "Preserve source lineage",
-                        ],
-                        "indexing": [
-                            "Create semantic chunks",
-                            "Store raw documents in object storage",
-                            "Store metadata in a relational or document database",
-                            "Use hybrid retrieval with keyword and vector indexes",
-                            "Apply permission and metadata filters before retrieval",
-                        ],
-                        "retrieval": [
-                            "Run hybrid search",
-                            "Apply reranking",
-                            "Assemble context with source IDs",
-                            "Detect weak, missing, stale, or conflicting evidence",
-                        ],
-                        "generation": [
-                            "Generate only from retrieved evidence",
-                            "Require citations for factual claims",
-                            "Refuse when evidence is insufficient",
-                            "Avoid unsupported synthesis",
-                        ],
-                        "verification": [
-                            "Extract answer claims",
-                            "Check each claim against retrieved evidence",
-                            "Reject unsupported claims",
-                            "Return confidence and refusal reasons",
-                        ],
-                        "observability": [
-                            "Log query, retrieved chunks, reranker scores, answer, citations, and verifier results",
-                            "Track retrieval recall, faithfulness, citation accuracy, refusal quality, latency, and cost",
-                        ],
-                    },
-                    "recommended_controls": [
-                        "Evidence sufficiency gate",
-                        "Citation validator",
-                        "Claim-level verifier",
-                        "Prompt-injection filtering",
-                        "PII and sensitive-data handling",
-                        "Human review for high-risk workflows",
-                    ],
+                    "grounded": False,
+                    "confidence": "low",
+                    "reason": "No answer was provided for verification.",
                 },
             }
 
-        if normalized_name in {
-            "verify_grounded_answer",
-            "check_answer_grounding",
-            "validate_claim_support",
-            "claim_verification",
-        }:
-            answer = function_args.get("answer", "")
-            evidence = function_args.get("evidence", [])
-            claims = function_args.get("claims", [])
-
-            if not answer:
-                return {
-                    "status": "completed",
-                    "tool": function_name,
-                    "execution_mode": "local_ai_engineering_runtime",
-                    "result": {
-                        "grounded": False,
-                        "confidence": "low",
-                        "reason": "No answer was provided for verification.",
-                    },
-                }
-
-            if not evidence:
-                return {
-                    "status": "completed",
-                    "tool": function_name,
-                    "execution_mode": "local_ai_engineering_runtime",
-                    "result": {
-                        "grounded": False,
-                        "confidence": "low",
-                        "reason": "No supporting evidence was provided.",
-                        "action": "Refuse, ask for more evidence, or retrieve additional sources.",
-                    },
-                }
-
+        if not evidence:
             return {
                 "status": "completed",
                 "tool": function_name,
                 "execution_mode": "local_ai_engineering_runtime",
                 "result": {
-                    "grounding_status": "evidence_available_not_semantically_verified",
-                    "confidence": "medium",
-                    "claims_checked": len(claims) if isinstance(claims, list) else 0,
-                    "evidence_items": len(evidence) if isinstance(evidence, list) else 1,
-                    "note": (
-                        "This local verifier confirms that supporting evidence was provided. "
-                        "A production verifier should perform claim-level semantic entailment checks "
-                        "before marking an answer as fully grounded."
+                    "grounded": False,
+                    "confidence": "low",
+                    "reason": "No supporting evidence was provided.",
+                    "action": (
+                        "Refuse, ask for more evidence, or retrieve "
+                        "additional sources."
                     ),
                 },
             }
 
-        if normalized_name in {
-            "evaluate_ai_architecture",
-            "review_ai_system_design",
-            "architecture_review",
-            "assess_ai_system",
-        }:
-            return {
-                "status": "completed",
-                "tool": function_name,
-                "execution_mode": "local_ai_engineering_runtime",
-                "input": function_args,
-                "result": {
-                    "review_dimensions": [
-                        "retrieval quality",
-                        "grounding strategy",
-                        "tool execution safety",
-                        "authorization boundaries",
-                        "observability",
-                        "evaluation coverage",
-                        "latency and cost",
-                        "failure handling",
-                        "deployment readiness",
-                    ],
-                    "recommended_improvements": [
-                        "Add offline evaluation datasets with expected citations.",
-                        "Add retrieval recall and reranking quality metrics.",
-                        "Add claim-level answer verification.",
-                        "Log tool calls and tool outputs for auditability.",
-                        "Separate model reasoning from deterministic business logic.",
-                        "Add refusal logic for low-confidence or unsupported answers.",
-                    ],
-                    "risk_areas": [
-                        "hallucinated answers",
-                        "prompt injection",
-                        "stale retrieved context",
-                        "over-permissive tools",
-                        "missing audit trails",
-                        "unclear ownership of generated output",
-                    ],
-                },
-            }
-
-        if normalized_name in {
-            "create_agent_observability_plan",
-            "agent_observability_plan",
-            "design_ai_observability",
-        }:
-            return {
-                "status": "completed",
-                "tool": function_name,
-                "execution_mode": "local_ai_engineering_runtime",
-                "input": function_args,
-                "result": {
-                    "logs": [
-                        "user query",
-                        "selected tools",
-                        "tool inputs",
-                        "tool outputs",
-                        "retrieved evidence",
-                        "model response",
-                        "citations",
-                        "verification result",
-                        "latency",
-                        "cost estimate",
-                        "error and refusal reason",
-                    ],
-                    "metrics": [
-                        "retrieval recall",
-                        "answer faithfulness",
-                        "citation accuracy",
-                        "tool success rate",
-                        "refusal precision",
-                        "p95 latency",
-                        "cost per request",
-                        "failed verification rate",
-                    ],
-                    "traces": [
-                        "request trace ID",
-                        "retrieval span",
-                        "reranking span",
-                        "generation span",
-                        "tool execution span",
-                        "verification span",
-                    ],
-                    "alerts": [
-                        "high unsupported-claim rate",
-                        "tool failure spike",
-                        "retrieval-empty spike",
-                        "latency regression",
-                        "unexpected cost increase",
-                    ],
-                },
-            }
-
         return {
-            "status": "adapter_required",
+            "status": "completed",
             "tool": function_name,
-            "execution_mode": "safe_local_fallback",
-            "input": function_args,
-            "custom_params_detected": bool(custom_params),
-            "message": (
-                "This portfolio version removed legacy gateway, OAuth, token, and provider-dispatch logic. "
-                "To execute this tool against a real external system, implement a dedicated adapter/service layer "
-                "with authentication, authorization, validation, observability, and error handling."
-            ),
-            "recommended_adapter_contract": {
-                "validate_input": True,
-                "enforce_authorization": True,
-                "execute_external_call": "service-layer responsibility",
-                "sanitize_output": True,
-                "log_trace": True,
-                "return_structured_result": True,
+            "execution_mode": "local_ai_engineering_runtime",
+            "result": {
+                "grounding_status": (
+                    "evidence_available_not_semantically_verified"
+                ),
+                "confidence": "medium",
+                "claims_checked": (
+                    len(claims) if isinstance(claims, list) else 0
+                ),
+                "evidence_items": (
+                    len(evidence) if isinstance(evidence, list) else 1
+                ),
+                "note": (
+                    "Supporting evidence was provided, but this local runtime "
+                    "does not perform semantic entailment. A production "
+                    "verifier should perform claim-level semantic verification "
+                    "before marking the answer as fully grounded."
+                ),
             },
         }
 
-    def submit_tool_outputs(self, tool_outputs, run_id, thread_id=None):
-        if thread_id is None:
-            current_run = getattr(self, "current_run", None)
-            thread_id = getattr(current_run, "thread_id", None)
+    if normalized_name in {
+        "evaluate_ai_architecture",
+        "review_ai_system_design",
+        "architecture_review",
+        "assess_ai_system",
+    }:
+        return {
+            "status": "completed",
+            "tool": function_name,
+            "execution_mode": "local_ai_engineering_runtime",
+            "input": function_args,
+            "result": {
+                "review_dimensions": [
+                    "retrieval quality",
+                    "grounding strategy",
+                    "tool execution safety",
+                    "authorization boundaries",
+                    "observability",
+                    "evaluation coverage",
+                    "latency and cost",
+                    "failure handling",
+                    "deployment readiness",
+                ],
+                "recommended_improvements": [
+                    "Add offline evaluation datasets with expected citations.",
+                    "Add retrieval recall and reranking quality metrics.",
+                    "Add claim-level answer verification.",
+                    "Log tool calls and outputs for auditability.",
+                    (
+                        "Separate model reasoning from deterministic "
+                        "business logic."
+                    ),
+                    (
+                        "Add refusal behavior for low-confidence or "
+                        "unsupported answers."
+                    ),
+                ],
+                "risk_areas": [
+                    "hallucinated answers",
+                    "prompt injection",
+                    "stale retrieved context",
+                    "over-permissive tools",
+                    "missing audit trails",
+                    "unclear ownership of generated output",
+                ],
+            },
+        }
 
-        if not thread_id:
-            raise RuntimeError("Cannot submit tool outputs because thread_id is missing.")
+    if normalized_name in {
+        "create_agent_observability_plan",
+        "agent_observability_plan",
+        "design_ai_observability",
+    }:
+        return {
+            "status": "completed",
+            "tool": function_name,
+            "execution_mode": "local_ai_engineering_runtime",
+            "input": function_args,
+            "result": {
+                "logs": [
+                    "user query",
+                    "selected tools",
+                    "tool inputs",
+                    "tool outputs",
+                    "retrieved evidence",
+                    "model response",
+                    "citations",
+                    "verification result",
+                    "latency",
+                    "cost estimate",
+                    "error and refusal reason",
+                ],
+                "metrics": [
+                    "retrieval recall",
+                    "answer faithfulness",
+                    "citation accuracy",
+                    "tool success rate",
+                    "refusal precision",
+                    "p95 latency",
+                    "cost per request",
+                    "failed verification rate",
+                ],
+                "traces": [
+                    "request trace ID",
+                    "retrieval span",
+                    "reranking span",
+                    "generation span",
+                    "tool execution span",
+                    "verification span",
+                ],
+                "alerts": [
+                    "high unsupported-claim rate",
+                    "tool failure spike",
+                    "retrieval-empty spike",
+                    "latency regression",
+                    "unexpected cost increase",
+                ],
+            },
+        }
 
-        with get_client().beta.threads.runs.submit_tool_outputs_stream(
-            thread_id=thread_id,
-            run_id=run_id,
-            tool_outputs=tool_outputs,
-            event_handler=EventHandler(),
-        ) as stream:
-            for _ in stream.text_deltas:
-                pass
-
-    @staticmethod
-    def handle_message(event):
-        message = event.data
-
-        if hasattr(message, "content") and message.content:
-            for content_block in message.content:
-                if hasattr(content_block, "text") and hasattr(content_block.text, "value"):
-                    print(f"\033[91mAI: {content_block.text.value}\033[0m")
-
-
-def save_assistant_details(name, assistant_id, thread_id):
-    assistants = load_all_assistant_details()
-
-    for assistant in assistants:
-        if assistant["name"] == name:
-            assistant["assistant_id"] = assistant_id
-            assistant["thread_id"] = thread_id
-            break
-    else:
-        assistants.append({
-            "name": name,
-            "assistant_id": assistant_id,
-            "thread_id": thread_id,
-        })
-
-    with open(ID_FILE, "w", encoding="utf-8") as f:
-        json.dump(assistants, f, indent=4)
+    return {
+        "status": "adapter_required",
+        "tool": function_name,
+        "execution_mode": "safe_local_fallback",
+        "input": function_args,
+        "custom_params_detected": bool(custom_params),
+        "message": (
+            "No local implementation exists for this tool. "
+            "A real external integration should use a dedicated adapter "
+            "with authentication, authorization, validation, observability, "
+            "timeouts, and error handling."
+        ),
+        "recommended_adapter_contract": {
+            "validate_input": True,
+            "enforce_authorization": True,
+            "execute_external_call": "service-layer responsibility",
+            "sanitize_output": True,
+            "log_trace": True,
+            "return_structured_result": True,
+        },
+    }
 
 
-def load_all_assistant_details():
-    if not os.path.exists(ID_FILE):
-        return []
+def build_tool_output(tool_call: Any) -> Dict[str, Any]:
+    """
+    Execute one Responses API function call and convert its result into a
+    function_call_output item.
+    """
+    function_name = getattr(tool_call, "name", "unknown_function")
+    raw_arguments = getattr(tool_call, "arguments", "{}") or "{}"
+    call_id = getattr(tool_call, "call_id", None)
+
+    if not call_id:
+        raise RuntimeError(
+            f"Function call '{function_name}' did not contain a call_id."
+        )
 
     try:
-        with open(ID_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except json.JSONDecodeError:
-        print(f"Warning: {ID_FILE} contains invalid JSON. Starting with empty assistant registry.")
-        return []
+        function_args = json.loads(raw_arguments)
+    except json.JSONDecodeError as exc:
+        result = {
+            "status": "error",
+            "tool": function_name,
+            "error_type": "invalid_json_arguments",
+            "message": "Tool arguments were not valid JSON.",
+            "details": str(exc),
+        }
 
+        return {
+            "type": "function_call_output",
+            "call_id": call_id,
+            "output": json.dumps(result, ensure_ascii=False),
+        }
 
-def load_assistant_details(name):
-    assistants = load_all_assistant_details()
+    if not isinstance(function_args, dict):
+        result = {
+            "status": "error",
+            "tool": function_name,
+            "error_type": "invalid_argument_shape",
+            "message": "Tool arguments must be a JSON object.",
+        }
 
-    for assistant in assistants:
-        if assistant["name"] == name:
-            return assistant["assistant_id"], assistant["thread_id"]
+        return {
+            "type": "function_call_output",
+            "call_id": call_id,
+            "output": json.dumps(result, ensure_ascii=False),
+        }
 
-    return None, None
+    custom_params = function_args.pop("_custom_params", {})
 
+    if not isinstance(custom_params, dict):
+        custom_params = {}
 
-def load_function_tools(file_path):
-    if not os.path.exists(file_path):
-        print(f"Warning: {file_path} not found. Assistant will run without custom function tools.")
-        return []
-
-    with open(file_path, "r", encoding="utf-8") as file:
-        return json.load(file)
-
-
-def create_assistant():
-    print("Creating an assistant...")
-    assistant = get_client().beta.assistants.create(**ASSISTANT_PARAMS)
-    print(f"Assistant Created: {assistant.id}")
-    return assistant
-
-
-def update_assistant(ass_id):
-    assistant = get_client().beta.assistants.update(ass_id, **ASSISTANT_PARAMS)
-    print(f"Assistant Updated: {assistant.id}")
-    return assistant
-
-
-def get_assistant(ass_id):
-    assistant = get_client().beta.assistants.retrieve(ass_id)
-    return assistant
-
-
-def delete_assistant(ass_id):
-    assistant = get_client().beta.assistants.delete(ass_id)
-    return assistant
-
-
-def create_thread():
-    print("Creating a thread...")
-    thread = get_client().beta.threads.create()
-    print(f"Thread Created: {thread.id}")
-    return thread
-
-
-def send_message(thread_id, content):
-    print(f"Sending message to thread {thread_id}...")
-    message = get_client().beta.threads.messages.create(
-        thread_id=thread_id,
-        role="user",
-        content=content,
+    result = execute_ai_engineering_tool(
+        function_name=function_name,
+        function_args=function_args,
+        custom_params=custom_params,
     )
-    return message
+
+    return {
+        "type": "function_call_output",
+        "call_id": call_id,
+        "output": json.dumps(result, ensure_ascii=False),
+    }
 
 
-def run_stream(thread_id, assistant_id):
-    print(f"Running and streaming on thread {thread_id}...")
-    with get_client().beta.threads.runs.stream(
-        thread_id=thread_id,
-        assistant_id=assistant_id,
-        event_handler=EventHandler(),
-    ) as stream:
-        stream.until_done()
+class AISystemsAssistant:
+    """
+    Small Responses API client with:
+
+    - multi-turn conversation state
+    - function calling
+    - safe local tool execution
+    - bounded tool-call loops
+    - dependency injection for tests
+    """
+
+    def __init__(
+        self,
+        client: Optional[Any] = None,
+        model: str = MODEL,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        max_tool_rounds: int = MAX_TOOL_ROUNDS,
+    ) -> None:
+        self.client = client or get_client()
+        self.model = model
+        self.tools = tools if tools is not None else load_function_tools()
+        self.max_tool_rounds = max_tool_rounds
+        self.previous_response_id: Optional[str] = None
+
+    def reset(self) -> None:
+        """Start a new conversation."""
+        self.previous_response_id = None
+
+    def _create_response(
+        self,
+        input_data: Any,
+        previous_response_id: Optional[str] = None,
+    ) -> Any:
+        request: Dict[str, Any] = {
+            "model": self.model,
+            "instructions": SYSTEM_INSTRUCTIONS,
+            "input": input_data,
+            "tools": self.tools,
+        }
+
+        if previous_response_id:
+            request["previous_response_id"] = previous_response_id
+
+        return self.client.responses.create(**request)
+
+    def ask(self, user_input: str) -> str:
+        """
+        Send one user turn.
+
+        The method continues automatically when the model requests function
+        calls. Each local result is returned as function_call_output and the
+        Responses API continues from the preceding response.
+        """
+        if not user_input.strip():
+            raise ValueError("user_input must not be empty.")
+
+        response = self._create_response(
+            input_data=user_input,
+            previous_response_id=self.previous_response_id,
+        )
+
+        for _ in range(self.max_tool_rounds):
+            tool_calls = [
+                item
+                for item in response.output
+                if getattr(item, "type", None) == "function_call"
+            ]
+
+            if not tool_calls:
+                self.previous_response_id = response.id
+
+                output_text = (response.output_text or "").strip()
+
+                if output_text:
+                    return output_text
+
+                return (
+                    "The model completed the response without returning "
+                    "text output."
+                )
+
+            tool_outputs = [
+                build_tool_output(tool_call)
+                for tool_call in tool_calls
+            ]
+
+            response = self._create_response(
+                input_data=tool_outputs,
+                previous_response_id=response.id,
+            )
+
+        raise RuntimeError(
+            f"Exceeded maximum tool-call depth of "
+            f"{self.max_tool_rounds} rounds."
+        )
 
 
-def cancel_run(thread_id, run_id):
-    try:
-        run_status = get_client().beta.threads.runs.retrieve(
-            thread_id=thread_id,
-            run_id=run_id,
-        ).status
+def run_interactive_session() -> None:
+    assistant = AISystemsAssistant()
 
-        if run_status not in ["completed", "failed", "canceled"]:
-            get_client().beta.threads.runs.cancel(thread_id=thread_id, run_id=run_id)
-            print(f"Run {run_id} canceled successfully.")
-        else:
-            print(f"Run {run_id} is already {run_status} and cannot be canceled.")
-
-    except Exception as e:
-        print(f"Failed to cancel run {run_id}: {e}")
-
-
-def signal_handler(sig, frame):
-    print("Signal detected, stopping the script...")
-    sys.exit(0)
-
-
-def run_interactive_session():
-    assistant_id, thread_id = load_assistant_details(ASSISTANT_NAME)
-
-    if not assistant_id:
-        assistant = create_assistant()
-        assistant_id = assistant.id
-    else:
-        update_assistant(assistant_id)
-
-    if not thread_id:
-        thread = create_thread()
-        thread_id = thread.id
-
-    save_assistant_details(ASSISTANT_NAME, assistant_id, thread_id)
-
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-
-    print("Starting interactive session. Type 'exit' or 'stop' to stop.")
+    print("AI Systems Engineering Assistant")
+    print(f"Model: {assistant.model}")
+    print(f"Loaded tools: {len(assistant.tools)}")
+    print()
+    print("Commands:")
+    print("  reset - start a new conversation")
+    print("  exit  - stop")
+    print()
     print("Example prompts:")
     print("- Design a grounded RAG architecture for a large document corpus.")
-    print("- Review this AI agent architecture for reliability and observability.")
-    print("- Create an evaluation plan for a RAG assistant that must avoid unsupported answers.")
+    print("- Review an AI agent architecture for reliability and observability.")
+    print("- Create an observability plan for a production AI agent.")
+    print()
 
     while True:
-        user_input = input("User: ")
-
-        if user_input.lower() in ["exit", "stop"]:
-            print("Exiting interactive session.")
-            time.sleep(1)
+        try:
+            user_input = input("User: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nExiting.")
             break
 
-        send_message(thread_id, user_input)
-        run_stream(thread_id, assistant_id)
+        if not user_input:
+            continue
+
+        command = user_input.lower()
+
+        if command in {"exit", "quit", "stop"}:
+            print("Exiting.")
+            break
+
+        if command == "reset":
+            assistant.reset()
+            print("Conversation reset.")
+            continue
+
+        try:
+            response = assistant.ask(user_input)
+            print(f"\nAI: {response}\n")
+        except Exception as exc:
+            print(f"\nError: {exc}\n")
 
 
 if __name__ == "__main__":
-    USER = str(uuid.uuid4())
-    print(f"USERID: {USER}")
-
-    ASSISTANT_PARAMS["tools"] = load_function_tools(TOOL_FUNCTIONS_FILE)
     run_interactive_session()

@@ -67,7 +67,7 @@ tools_list = [{
 client = openai.Client(api_key=os.getenv("OPENAI_API_KEY"))
 
 
-# if you don't specify the assitant seems openai will keep creating assistants
+# if you don't specify the assitant seems openai will keep creating assistant
 def create_assistants():
     assistant_file_id = "airtable_assistant_id.txt"
     if os.path.exists(assistant_file_id):
@@ -75,7 +75,7 @@ def create_assistants():
             assistant_id = file.read().strip()
     else:
         print("Creating an Assistant....")
-        # Upload a file with an "assistants" purpose
+        # Upload a file with an "assistant" purpose
         assistant = client.beta.assistants.create(
             name="Airtable",
             instructions="You are a sales chatbot. Use the data you pull from our airtable database to answer question on our potential clients.",

@@ -28,8 +28,8 @@ class OpenAIAssistantAnalyzer(OpenAIAnalyzerBase):
                  ) -> None:
         api_key = api_key or os.getenv("OPENAI_API_KEY")
         super().__init__(db_path, training_data_path, api_key, model)
-        # Make dir to store data for assistants
-        self.ai_assistants_dir = self.db_path / "assistants"
+        # Make dir to store data for assistant
+        self.ai_assistants_dir = self.db_path / "assistant"
         if not self.ai_assistants_dir.exists():
             self.ai_assistants_dir.mkdir(exist_ok=True, parents=True)
 

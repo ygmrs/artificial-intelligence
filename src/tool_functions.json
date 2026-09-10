@@ -1,10 +1,9 @@
 [
   {
     "type": "function",
-    "function": {
-      "name": "design_rag_pipeline",
-      "description": "Design a production-aware RAG pipeline architecture with ingestion, indexing, retrieval, generation, verification, observability, and safety controls.",
-      "parameters": {
+    "name": "design_rag_pipeline",
+    "description": "Design a production-aware RAG pipeline architecture with ingestion, indexing, retrieval, generation, verification, observability, and safety controls.",
+    "parameters": {
         "type": "object",
         "required": [
           "problem_statement"
@@ -34,15 +33,14 @@
           }
         },
         "additionalProperties": false
-      }
-    }
+      },
+    "strict": true
   },
   {
     "type": "function",
-    "function": {
-      "name": "verify_grounded_answer",
-      "description": "Check whether an AI-generated answer has supporting evidence available and identify whether stronger claim-level verification is needed.",
-      "parameters": {
+    "name": "verify_grounded_answer",
+    "description": "Check whether an AI-generated answer has supporting evidence available and identify whether stronger claim-level verification is needed.",
+    "parameters": {
         "type": "object",
         "required": [
           "answer",
@@ -69,15 +67,14 @@
           }
         },
         "additionalProperties": false
-      }
-    }
+      },
+    "strict": true
   },
   {
     "type": "function",
-    "function": {
-      "name": "evaluate_ai_architecture",
-      "description": "Review an AI system architecture for retrieval quality, grounding, tool safety, authorization boundaries, observability, evaluation coverage, cost, latency, and deployment readiness.",
-      "parameters": {
+    "name": "evaluate_ai_architecture",
+    "description": "Review an AI system architecture for retrieval quality, grounding, tool safety, authorization boundaries, observability, evaluation coverage, cost, latency, and deployment readiness.",
+    "parameters": {
         "type": "object",
         "required": [
           "architecture_description"
@@ -105,15 +102,14 @@
           }
         },
         "additionalProperties": false
-      }
-    }
+      },
+    "strict": true
   },
   {
     "type": "function",
-    "function": {
-      "name": "create_agent_observability_plan",
-      "description": "Create an observability plan for an AI agent or assistant, including logs, metrics, traces, alerts, and failure signals.",
-      "parameters": {
+    "name": "create_agent_observability_plan",
+    "description": "Create an observability plan for an AI agent or assistant, including logs, metrics, traces, alerts, and failure signals.",
+    "parameters": {
         "type": "object",
         "required": [
           "system_description"
@@ -141,7 +137,7 @@
           }
         },
         "additionalProperties": false
-      }
-    }
+      },
+    "strict": true
   }
 ]
