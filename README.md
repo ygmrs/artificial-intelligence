@@ -21,28 +21,24 @@ The active implementation demonstrates multi-turn interaction, structured functi
 ## Architecture
 
 ```mermaid
-flowchart TD
-    A["User Input"] --> B["OpenAI Responses API"]
+flowchart LR
+    A["User"] --> B["Responses API"]
+    B --> C{"Tool call?"}
 
-    B --> C{"Function Call Requested?"}
+    C -- No --> D["Return response"]
 
-    C -- "No" --> D["Model Response"]
-    D --> E["Return Answer to User"]
+    C -- Yes --> E["Validate arguments"]
+    E --> F["Local tool runtime"]
+    F --> G{"Supported?"}
 
-    C -- "Yes" --> F["Parse & Validate Arguments"]
-    F --> G["Safe Local Tool Runtime"]
+    G -- Yes --> H["Execute tool"]
+    G -- No --> I["adapter_required"]
 
-    G --> H{"Tool Available Locally?"}
+    H --> J["Structured result"]
+    I --> J
 
-    H -- "Yes" --> I["Execute AI Engineering Tool"]
-    H -- "No" --> J["Return adapter_required"]
-
-    I --> K["Structured Tool Result"]
-    J --> K
-
-    K --> L["function_call_output"]
-    L --> M["Continue Response using previous_response_id"]
-    M --> B
+    J --> K["function_call_output"]
+    K --> B
 ```
 
 ### Request Flow
